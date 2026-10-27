@@ -1,45 +1,41 @@
 import numpy as np
 import pandas as pd
-import torch                             # тензоры и автоград (автоматические градиенты) — разрешены заданием
+import torch                         
 import torch.nn as nn
 
 
 def _codes(s, top=None):
-    """Категориальный столбец -> целые коды 1..K (0 зарезервирован под padding)."""
-    s = s.astype(object).where(s.notna(), "NA").astype(str)      # пропуски -> отдельная категория "NA"
-    if top:                                                      # оставляем только top самых частых значений
+    s = s.astype(object).where(s.notna(), "NA").astype(str)     
+    if top:                                                    
         keep = set(s.value_counts().index[:top])
-        s = s.where(s.isin(keep), "OTHER")                       # редкие -> "OTHER" (борьба с разреженностью)
-    return pd.factorize(s)[0] + 1                                # +1: код 0 — это padding
+        s = s.where(s.isin(keep), "OTHER")                     
+    return pd.factorize(s)[0] + 1                         
 
 
 def build_fm_features(meta, tr_u, tr_i, n_users, n_items):
-    """Строит таблицы признаков пользователей (UF) и объектов (IF).
-    Только то, что известно в момент рекомендации: метаданные каталога + статистика по train.
-    Каждая строка — список индексов активных (=1) признаков; индексы глобально уникальны; 0 = padding."""
-    cols, sizes = [], []                                         # столбцы признаков и размеры их словарей
+    cols, sizes = [], []                                    
 
-    def add(codes):                                              # зарегистрировать очередной признак
+    def add(codes):                                             
         codes = np.asarray(codes)
         cols.append(codes)
         sizes.append(int(codes.max()) + 1)
 
-    add(np.arange(n_items) + 1)                                  # [0] ID объекта
-    add(_codes(meta["main_category"], 50))                       # [1] главная категория
-    add(_codes(meta["store"], 500))                              # [2] магазин / издатель (топ-500)
-    price = pd.to_numeric(meta["price"], errors="coerce")        # цена как число (мусор -> NaN)
-    q = pd.qcut(price.rank(method="first"), 10, labels=False, duplicates="drop")   # децили цены
-    pb = q.fillna(-1).astype(int).values + 2                     # [3] бин цены; пропуск -> 1
+    add(np.arange(n_items) + 1)                                 
+    add(_codes(meta["main_category"], 50))                      
+    add(_codes(meta["store"], 500))                            
+    price = pd.to_numeric(meta["price"], errors="coerce")       
+    q = pd.qcut(price.rank(method="first"), 10, labels=False, duplicates="drop")   
+    pb = q.fillna(-1).astype(int).values + 2                    
     add(pb)
-    pop = np.bincount(tr_i, minlength=n_items)                   # популярность объекта В TRAIN (без утечки)
-    add(np.minimum(np.log2(pop + 1).astype(int), 15) + 1)        # [4] лог-бин популярности
-    cats = meta["categories"].apply(                             # первые 3 уровня иерархии категорий
+    pop = np.bincount(tr_i, minlength=n_items)                 
+    add(np.minimum(np.log2(pop + 1).astype(int), 15) + 1)       
+    cats = meta["categories"].apply(                           
         lambda c: list(c)[:3] if isinstance(c, (list, np.ndarray)) else [])
-    vc = pd.Series([t for l in cats for t in l]).value_counts().index[:300]   # 300 самых частых токенов
+    vc = pd.Series([t for l in cats for t in l]).value_counts().index[:300]  
     cmap = {t: j + 1 for j, t in enumerate(vc)}
-    for j in range(3):                                           # [5,6,7] токены категорий (0 = нет токена)
+    for j in range(3):                                         
         add(np.array([cmap.get(l[j], 0) if len(l) > j else 0 for l in cats]) + 1)
-    item_cols = len(cols)                                        # сколько столбцов относятся к объекту
+    item_cols = len(cols)                                       
 
     add(np.arange(n_users) + 1)                                  # ID пользователя
     act = np.bincount(tr_u, minlength=n_users)                   # активность пользователя в train

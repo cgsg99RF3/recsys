@@ -1,35 +1,27 @@
-import numpy as np                      # численные массивы и линейная алгебра
-import scipy.sparse as sp               # разреженные матрицы (в рекомендациях почти все нули)
+import numpy as np                     
+import scipy.sparse as sp              
 
 
 class ItemKNN:
-    """Item-based коллаборативная фильтрация.
-    Идея: два объекта похожи, если их часто берут одни и те же пользователи.
-    Рекомендуем пользователю объекты, похожие на те, с которыми он уже взаимодействовал."""
-
     def __init__(self, k=50, shrink=10.0, alpha=0.5):
-        self.k = int(k)          # сколько ближайших соседей оставляем у каждого объекта (остальные сходства = 0)
-        self.shrink = shrink     # штраф в знаменателе: гасит сходство у редких объектов (мало данных -> ненадёжно)
-        self.alpha = alpha       # 0.5 = обычный косинус; другие значения делают сходство асимметричным
+        self.k = int(k)        
+        self.shrink = shrink    
+        self.alpha = alpha     
 
     def fit(self, X):
-        # X: матрица пользователь x объект (1 = было положительное взаимодействие)
-        X = X.tocsr().astype(np.float32)             # CSR быстро режет строки (нужно в score); float32 экономит память
-        self.X = X                                   # запоминаем историю пользователей — нужна при предсказании
-        # popularity объекта = сколько пользователей его взяли (для бинарной матрицы норма^2 = сумма столбца)
-        norms = np.asarray(X.sum(0)).ravel() + 1e-9  # +1e-9 защищает от деления на ноль
-        co = (X.T @ X).toarray()                     # co[i,j] = сколько пользователей взяли и i, и j (совстречаемость)
-        # асимметричный косинус со shrinkage: co / (|U_i|^a * |U_j|^(1-a) + shrink)
+        X = X.tocsr().astype(np.float32)           
+        self.X = X                                  
+        norms = np.asarray(X.sum(0)).ravel() + 1e-9 
+        co = (X.T @ X).toarray()                    
+       
         S = co / ((norms[:, None] ** self.alpha) * (norms[None, :] ** (1 - self.alpha)) + self.shrink)
-        np.fill_diagonal(S, 0)                       # объект не должен рекомендовать сам себя
+        np.fill_diagonal(S, 0)                     
         if self.k < S.shape[0]:
-            # индексы всех, кроме top-k по каждой строке: argpartition ставит k наибольших в начало
+           
             idx = np.argpartition(-S, self.k, axis=1)[:, self.k:]
-            np.put_along_axis(S, idx, 0, axis=1)     # обнуляем всех не-соседей, остаются только k лучших
-        self.S = sp.csr_matrix(S)                    # храним разреженно: большинство элементов теперь нули
+            np.put_along_axis(S, idx, 0, axis=1)    
+        self.S = sp.csr_matrix(S)                 
         return self
 
     def score(self, users):
-        # оценка(u,i) = сумма сходств объекта i со всеми объектами из истории u
-        # (X[users] @ S.T)[u,i] = sum_j X[u,j] * S[i,j]
         return (self.X[users] @ self.S.T).toarray()
